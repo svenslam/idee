@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Mic, X, Volume2, Save } from 'lucide-react';
+import { Mic, X, Volume2, Save, Loader2 } from 'lucide-react';
 import { getGeminiClient, encode, decode, decodeAudioData } from '../services/geminiService.ts';
 import { LiveServerMessage, Modality, Blob as GeminiBlob } from '@google/genai';
 import { Note } from '../types.ts';
@@ -16,40 +16,66 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
   const [aiResponse, setAiResponse] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
 
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const outputAudioContextRef = useRef<AudioContext | null>(null);
+  const inputAudioCtxRef = useRef<AudioContext | null>(null);
+  const outputAudioCtxRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const sessionRef = useRef<any>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const handleStop = useCallback(() => {
+  const cleanup = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
     }
     if (sessionRef.current) {
-      try {
-        sessionRef.current.close();
-      } catch (e) {}
+      try { sessionRef.current.close(); } catch (e) {}
+      sessionRef.current = null;
     }
+    sourcesRef.current.forEach(s => { try { s.stop(); } catch(e){} });
+    sourcesRef.current.clear();
+    
+    if (inputAudioCtxRef.current) {
+      inputAudioCtxRef.current.close().catch(() => {});
+      inputAudioCtxRef.current = null;
+    }
+    if (outputAudioCtxRef.current) {
+      outputAudioCtxRef.current.close().catch(() => {});
+      outputAudioCtxRef.current = null;
+    }
+    
     setIsRecording(false);
+    setIsConnecting(false);
   }, []);
 
   const startSession = async () => {
+    if (isConnecting || isRecording) return;
+    
     setIsConnecting(true);
     setTranscription('');
     setAiResponse('');
     
     try {
-      const ai = getGeminiClient();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // CRUCIAAL VOOR iOS: AudioContext moet worden aangemaakt/hervat binnen de click handler
+      const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      
+      // Forceer resume (nodig voor Safari)
+      await Promise.all([inputCtx.resume(), outputCtx.resume()]);
+      
+      inputAudioCtxRef.current = inputCtx;
+      outputAudioCtxRef.current = outputCtx;
+
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
       streamRef.current = stream;
 
-      const inputAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      const outputAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      audioContextRef.current = inputAudioCtx;
-      outputAudioContextRef.current = outputAudioCtx;
-
+      const ai = getGeminiClient();
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         callbacks: {
@@ -57,15 +83,15 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
             setIsRecording(true);
             setIsConnecting(false);
 
-            const source = inputAudioCtx.createMediaStreamSource(stream);
-            const scriptProcessor = inputAudioCtx.createScriptProcessor(4096, 1, 1);
+            const source = inputCtx.createMediaStreamSource(stream);
+            const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
             
             scriptProcessor.onaudioprocess = (e) => {
+              if (!isRecording) return;
               const inputData = e.inputBuffer.getChannelData(0);
-              const l = inputData.length;
-              const int16 = new Int16Array(l);
-              for (let i = 0; i < l; i++) {
-                int16[i] = inputData[i] * 32768;
+              const int16 = new Int16Array(inputData.length);
+              for (let i = 0; i < inputData.length; i++) {
+                int16[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
               }
               const pcmBlob: GeminiBlob = {
                 data: encode(new Uint8Array(int16.buffer)),
@@ -73,12 +99,12 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
               };
               
               sessionPromise.then(session => {
-                session.sendRealtimeInput({ media: pcmBlob });
-              });
+                if (session) session.sendRealtimeInput({ media: pcmBlob });
+              }).catch(() => {});
             };
 
             source.connect(scriptProcessor);
-            scriptProcessor.connect(inputAudioCtx.destination);
+            scriptProcessor.connect(inputCtx.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
             if (message.serverContent?.outputTranscription) {
@@ -89,12 +115,13 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
             }
 
             const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-            if (audioData) {
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputAudioCtx.currentTime);
-              const buffer = await decodeAudioData(decode(audioData), outputAudioCtx, 24000, 1);
-              const source = outputAudioCtx.createBufferSource();
+            if (audioData && outputAudioCtxRef.current) {
+              const currentCtx = outputAudioCtxRef.current;
+              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, currentCtx.currentTime);
+              const buffer = await decodeAudioData(decode(audioData), currentCtx, 24000, 1);
+              const source = currentCtx.createBufferSource();
               source.buffer = buffer;
-              source.connect(outputAudioCtx.destination);
+              source.connect(currentCtx.destination);
               source.start(nextStartTimeRef.current);
               nextStartTimeRef.current += buffer.duration;
               sourcesRef.current.add(source);
@@ -102,20 +129,16 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
             }
 
             if (message.serverContent?.interrupted) {
-              sourcesRef.current.forEach(s => s.stop());
+              sourcesRef.current.forEach(s => { try { s.stop(); } catch(e){} });
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
             }
           },
           onerror: (e) => {
             console.error('Session error:', e);
-            handleStop();
-            setIsConnecting(false);
+            cleanup();
           },
-          onclose: () => {
-            handleStop();
-            setIsConnecting(false);
-          }
+          onclose: () => cleanup()
         },
         config: {
           responseModalities: [Modality.AUDIO],
@@ -131,82 +154,78 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
       sessionRef.current = await sessionPromise;
     } catch (error) {
       console.error('Failed to start voice session:', error);
-      setIsConnecting(false);
+      cleanup();
     }
   };
 
   useEffect(() => {
-    return () => {
-      handleStop();
-    };
-  }, [handleStop]);
-
-  const handleSaveAsNote = () => {
-    onSaveNote({
-      title: transcription.slice(0, 30) || "Gesproken Notitie",
-      content: `Vraag: ${transcription}\nAntwoord: ${aiResponse}`,
-      type: 'voice',
-      tags: ['gesproken', 'vraag']
-    });
-    onClose();
-  };
+    return () => cleanup();
+  }, [cleanup]);
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in-95">
         <div className="bg-emerald-600 p-6 flex justify-between items-center text-white">
           <div className="flex items-center gap-3">
-            <Volume2 className="w-6 h-6" />
-            <h2 className="text-xl font-bold">Stel een Vraag</h2>
+            <Volume2 className="w-5 h-5" />
+            <h2 className="text-lg font-bold">Live Assistent</h2>
           </div>
-          <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-full transition-colors">
-            <X className="w-6 h-6" />
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+            <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-8 space-y-6">
-          <div className="flex flex-col items-center justify-center py-4">
+        <div className="p-8 space-y-8">
+          <div className="flex flex-col items-center">
             <button
-              onClick={isRecording ? handleStop : startSession}
+              onClick={isRecording ? cleanup : startSession}
               disabled={isConnecting}
-              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all transform active:scale-95 ${
+              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-xl transition-all transform active:scale-90 ${
                 isRecording 
-                  ? 'bg-red-500 hover:bg-red-600 animate-pulse ring-8 ring-red-100' 
-                  : 'bg-emerald-500 hover:bg-emerald-600 ring-8 ring-emerald-50'
+                  ? 'bg-red-500 ring-8 ring-red-50' 
+                  : 'bg-emerald-500 ring-8 ring-emerald-50'
               } ${isConnecting ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               {isConnecting ? (
-                <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin" />
+                <Loader2 className="w-10 h-10 text-white animate-spin" />
               ) : (
-                <Mic className="w-10 h-10 text-white" />
+                <Mic className={`w-10 h-10 text-white ${isRecording ? 'animate-pulse' : ''}`} />
               )}
             </button>
-            <p className="mt-6 font-semibold text-gray-500 uppercase tracking-widest text-xs">
-              {isConnecting ? 'Verbinden...' : isRecording ? 'Ik luister...' : 'Tik om te praten'}
+            <p className="mt-6 font-bold text-gray-400 uppercase tracking-widest text-[10px]">
+              {isConnecting ? 'VERBINDEN...' : isRecording ? 'IK LUISTER...' : 'TIK OM TE STARTEN'}
             </p>
           </div>
 
-          <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+          <div className="space-y-4 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar min-h-[100px] flex flex-col">
             {transcription && (
-              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                <span className="text-[10px] font-bold text-gray-400 uppercase">Jij</span>
-                <p className="text-gray-700 mt-1 leading-relaxed">{transcription}</p>
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 self-end max-w-[90%]">
+                <p className="text-gray-700 text-sm leading-relaxed">{transcription}</p>
               </div>
             )}
             {aiResponse && (
-              <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
-                <span className="text-[10px] font-bold text-emerald-600 uppercase">IdeaSpark</span>
-                <p className="text-gray-800 mt-1 leading-relaxed">{aiResponse}</p>
+              <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 self-start max-w-[90%]">
+                <p className="text-gray-800 text-sm font-medium leading-relaxed">{aiResponse}</p>
               </div>
+            )}
+            {!transcription && !aiResponse && !isConnecting && !isRecording && (
+              <p className="text-center text-gray-300 text-sm italic mt-4">Stel een vraag over je ideeën of maak een snelle notitie.</p>
             )}
           </div>
 
           {(transcription || aiResponse) && (
             <button
-              onClick={handleSaveAsNote}
-              className="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-black text-white py-4 rounded-2xl font-bold transition-all shadow-md active:scale-[0.98]"
+              onClick={() => {
+                onSaveNote({
+                  title: transcription.substring(0, 30) || "Gesproken Notitie",
+                  content: `${transcription}\n\nAntwoord: ${aiResponse}`,
+                  tags: ['spraak']
+                });
+                onClose();
+              }}
+              className="w-full flex items-center justify-center gap-2 bg-gray-900 text-white py-4 rounded-2xl font-bold hover:bg-black transition-all shadow-lg active:scale-95"
             >
-              <Save className="w-5 h-5" />
+              <Save className="w-4 h-4" />
               Opslaan als notitie
             </button>
           )}
