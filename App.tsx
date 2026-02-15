@@ -4,16 +4,14 @@ import {
   Plus, 
   Search, 
   Mic, 
-  Lightbulb, 
   FileText, 
   Sparkles,
-  Command,
-  ArrowRight
+  Command
 } from 'lucide-react';
-import { Note, NoteType } from './types';
-import NoteCard from './components/NoteCard';
-import VoiceAssistant from './components/VoiceAssistant';
-import { summarizeNote, categorizeNote } from './services/geminiService';
+import { Note, NoteType } from './types.ts';
+import NoteCard from './components/NoteCard.tsx';
+import VoiceAssistant from './components/VoiceAssistant.tsx';
+import { summarizeNote, categorizeNote } from './services/geminiService.ts';
 
 const App: React.FC = () => {
   const [notes, setNotes] = useState<Note[]>(() => {
@@ -149,7 +147,6 @@ const App: React.FC = () => {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-8">
-        {/* Quick Input Section */}
         <section className="mb-12">
           <div className="bg-white rounded-2xl shadow-xl shadow-gray-200/50 border border-gray-100 overflow-hidden p-1">
             <div className="relative">
@@ -158,7 +155,10 @@ const App: React.FC = () => {
                 value={newNoteContent}
                 onChange={(e) => setNewNoteContent(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && e.ctrlKey) addNote();
+                  if (e.key === 'Enter' && e.ctrlKey) {
+                    e.preventDefault();
+                    addNote();
+                  }
                 }}
                 className="w-full min-h-[120px] p-6 text-lg border-none focus:ring-0 outline-none resize-none placeholder-gray-300 font-medium"
               />
@@ -175,7 +175,7 @@ const App: React.FC = () => {
                   className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-200 disabled:cursor-not-allowed text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg shadow-emerald-200 active:scale-95"
                 >
                   {isProcessing ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   ) : (
                     <Plus className="w-4 h-4" />
                   )}
@@ -186,7 +186,6 @@ const App: React.FC = () => {
           </div>
         </section>
 
-        {/* Notes Grid */}
         <section>
           <div className="flex items-center justify-between mb-8">
             <h2 className="text-2xl font-black text-gray-900 flex items-center gap-2">
@@ -219,7 +218,6 @@ const App: React.FC = () => {
         </section>
       </main>
 
-      {/* Floating Action Buttons */}
       <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 z-40">
         <button 
           onClick={() => setIsVoiceOpen(true)}
@@ -230,7 +228,6 @@ const App: React.FC = () => {
         </button>
       </div>
 
-      {/* Voice Assistant Modal */}
       {isVoiceOpen && (
         <VoiceAssistant 
           onClose={() => setIsVoiceOpen(false)} 
@@ -240,23 +237,5 @@ const App: React.FC = () => {
     </div>
   );
 };
-
-// Helper for loading icon
-const Loader2 = ({ className }: { className?: string }) => (
-  <svg 
-    className={className} 
-    xmlns="http://www.w3.org/2000/svg" 
-    width="24" 
-    height="24" 
-    viewBox="0 0 24 24" 
-    fill="none" 
-    stroke="currentColor" 
-    strokeWidth="2" 
-    strokeLinecap="round" 
-    strokeLinejoin="round"
-  >
-    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-  </svg>
-);
 
 export default App;

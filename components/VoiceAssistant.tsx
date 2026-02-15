@@ -1,9 +1,9 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Mic, X, Loader2, Volume2, Save } from 'lucide-react';
-import { getGeminiClient, encode, decode, decodeAudioData } from '../services/geminiService';
+import { Mic, X, Volume2, Save } from 'lucide-react';
+import { getGeminiClient, encode, decode, decodeAudioData } from '../services/geminiService.ts';
 import { LiveServerMessage, Modality, Blob as GeminiBlob } from '@google/genai';
-import { Note } from '../types';
+import { Note } from '../types.ts';
 
 interface VoiceAssistantProps {
   onClose: () => void;
@@ -28,13 +28,18 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
       streamRef.current.getTracks().forEach(track => track.stop());
     }
     if (sessionRef.current) {
-      sessionRef.current.close();
+      try {
+        sessionRef.current.close();
+      } catch (e) {}
     }
     setIsRecording(false);
   }, []);
 
   const startSession = async () => {
     setIsConnecting(true);
+    setTranscription('');
+    setAiResponse('');
+    
     try {
       const ai = getGeminiClient();
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -49,7 +54,6 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         callbacks: {
           onopen: () => {
-            console.log('Gemini Live session opened');
             setIsRecording(true);
             setIsConnecting(false);
 
@@ -106,15 +110,16 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
           onerror: (e) => {
             console.error('Session error:', e);
             handleStop();
+            setIsConnecting(false);
           },
           onclose: () => {
-            console.log('Session closed');
             handleStop();
+            setIsConnecting(false);
           }
         },
         config: {
           responseModalities: [Modality.AUDIO],
-          systemInstruction: 'Je bent een behulpzame notitie-assistent genaamd IdeaSpark. Beantwoord de vraag van de gebruiker kort en krachtig. Help bij het brainstormen of vastleggen van snelle gedachten.',
+          systemInstruction: 'Je bent IdeaSpark, een snelle notitie-assistent. Geef korte, krachtige antwoorden in het Nederlands.',
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } }
           },
@@ -171,7 +176,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
               } ${isConnecting ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               {isConnecting ? (
-                <Loader2 className="w-10 h-10 text-white animate-spin" />
+                <div className="w-10 h-10 border-4 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
                 <Mic className="w-10 h-10 text-white" />
               )}

@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { Note } from '../types';
+import { Note } from '../types.ts';
 import { Trash2, MessageSquare, Lightbulb, Mic } from 'lucide-react';
 
 interface NoteCardProps {
