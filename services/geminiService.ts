@@ -1,10 +1,13 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-const API_KEY = process.env.API_KEY || '';
-
 export const getGeminiClient = () => {
-  return new GoogleGenAI({ apiKey: API_KEY });
+  // Gebruik de API sleutel direct vanuit process.env
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    console.warn("Geen API_KEY gevonden in process.env");
+  }
+  return new GoogleGenAI({ apiKey: apiKey || "" });
 };
 
 export const summarizeNote = async (content: string): Promise<string> => {

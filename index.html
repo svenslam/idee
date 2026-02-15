@@ -28,6 +28,15 @@
             border-radius: 10px;
         }
     </style>
+    <script>
+      // Shim voor process.env die nodig is voor de Gemini SDK in de browser
+      window.process = { 
+        env: { 
+          // De API_KEY wordt door het platform geïnjecteerd in de globale scope
+          API_KEY: window.process?.env?.API_KEY || "" 
+        } 
+      };
+    </script>
     <!-- Consistente importmap voor ESM modules -->
     <script type="importmap">
 {
@@ -42,12 +51,17 @@
   }
 }
 </script>
-    <!-- Babel Standalone voor in-browser TSX/JSX transpilation (essentieel voor GitHub Pages zonder build-stap) -->
+    <!-- Babel Standalone voor in-browser TSX/JSX transpilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body>
     <div id="root"></div>
-    <!-- Gebruik type="text/babel" om de MIME-type restricties voor modules te omzeilen op statische hosts -->
-    <script type="text/babel" data-presets="react,typescript" data-type="module" src="index.tsx"></script>
+    <!-- 
+      BELANGRIJK: We verwijderen 'data-type="module"'. 
+      Hierdoor gebruikt Babel zijn eigen 'XHR/fetch' mechanisme om de bestanden op te halen.
+      Babel is minder streng met MIME-types dan de browser's eigen module loader, 
+      waardoor de 'application/octet-stream' fout op GitHub Pages wordt omzeild.
+    -->
+    <script type="text/babel" data-presets="react,typescript" src="index.tsx"></script>
 </body>
 </html>
