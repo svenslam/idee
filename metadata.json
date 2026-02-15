@@ -1,0 +1,7 @@
+{
+  "name": "IdeaSpark - Quick Notes & Voice",
+  "description": "Een intuïtieve notitie-app voor snelle ideeën, tekstnotities en directe gesproken vragen met AI-ondersteuning.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
