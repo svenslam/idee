@@ -60,19 +60,19 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
     setAiResponse('');
     
     try {
-      // 1. Maak AudioContexts aan (moet in click handler voor iOS)
+      // 1. Maak AudioContexts aan (Must be inside user gesture for iOS Safari)
       const AudioContextClass = (window.AudioContext || (window as any).webkitAudioContext);
       const inputCtx = new AudioContextClass({ sampleRate: 16000 });
       const outputCtx = new AudioContextClass({ sampleRate: 24000 });
       
-      // 2. Resume contexts direct (essentieel voor Safari)
+      // 2. Resume contexts immediately
       if (inputCtx.state === 'suspended') await inputCtx.resume();
       if (outputCtx.state === 'suspended') await outputCtx.resume();
       
       inputAudioCtxRef.current = inputCtx;
       outputAudioCtxRef.current = outputCtx;
 
-      // 3. Vraag microfoon permissie
+      // 3. Request Mic access
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
@@ -181,7 +181,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
         <div className="bg-emerald-600 p-6 flex justify-between items-center text-white">
           <div className="flex items-center gap-3">
             <Volume2 className="w-5 h-5" />
-            <h2 className="text-lg font-bold">Assistent</h2>
+            <h2 className="text-lg font-bold">Live Assistent</h2>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors active:scale-90">
             <X className="w-5 h-5" />
@@ -222,7 +222,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
               </div>
             )}
             {!transcription && !aiResponse && !isConnecting && !isRecording && (
-              <p className="text-center text-gray-300 text-sm italic mt-4 px-4">Stel een vraag of vertel me je idee.</p>
+              <p className="text-center text-gray-300 text-sm italic mt-4 px-4">Stel een vraag over je ideeën of maak een snelle notitie.</p>
             )}
           </div>
 

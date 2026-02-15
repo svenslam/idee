@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>IdeaSpark</title>
+    <!-- Tailwind Play CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -27,6 +28,7 @@
             border-radius: 10px;
         }
     </style>
+    <!-- Consistente importmap voor ESM modules -->
     <script type="importmap">
 {
   "imports": {
@@ -40,9 +42,12 @@
   }
 }
 </script>
+    <!-- Babel Standalone voor in-browser TSX/JSX transpilation (essentieel voor GitHub Pages zonder build-stap) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body>
     <div id="root"></div>
-    <script type="module" src="./index.tsx"></script>
+    <!-- Gebruik type="text/babel" om de MIME-type restricties voor modules te omzeilen op statische hosts -->
+    <script type="text/babel" data-presets="react,typescript" data-type="module" src="index.tsx"></script>
 </body>
 </html>
