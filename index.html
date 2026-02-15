@@ -4,12 +4,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>IdeaSpark</title>
-    <!-- Tailwind Play CDN -->
+    <title>IdeaSpark - Snelle Notities & Voice</title>
+    
+    <!-- Tailwind & Fonts -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+    
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -27,41 +29,380 @@
             background: #e5e7eb;
             border-radius: 10px;
         }
+        .note-card-enter {
+            animation: slideIn 0.3s ease-out;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
     </style>
-    <script>
-      // Shim voor process.env die nodig is voor de Gemini SDK in de browser
-      window.process = { 
-        env: { 
-          // De API_KEY wordt door het platform geïnjecteerd in de globale scope
-          API_KEY: window.process?.env?.API_KEY || "" 
-        } 
-      };
-    </script>
-    <!-- Consistente importmap voor ESM modules -->
+
+    <!-- Import Map -->
     <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@19.0.0",
-    "react-dom": "https://esm.sh/react-dom@19.0.0",
-    "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
-    "lucide-react": "https://esm.sh/lucide-react@0.460.0?external=react",
-    "@google/genai": "https://esm.sh/@google/genai@1.41.0",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "react/": "https://esm.sh/react@^19.2.4/"
-  }
-}
-</script>
-    <!-- Babel Standalone voor in-browser TSX/JSX transpilation -->
+    {
+      "imports": {
+        "react": "https://esm.sh/react@19.0.0",
+        "react-dom": "https://esm.sh/react-dom@19.0.0",
+        "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.460.0?external=react",
+        "@google/genai": "https://esm.sh/@google/genai@1.41.0"
+      }
+    }
+    </script>
+    
+    <!-- Babel Standalone -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body>
     <div id="root"></div>
-    <!-- 
-      BELANGRIJK: We verwijderen 'data-type="module"'. 
-      Hierdoor gebruikt Babel zijn eigen 'XHR/fetch' mechanisme om de bestanden op te halen.
-      Babel is minder streng met MIME-types dan de browser's eigen module loader, 
-      waardoor de 'application/octet-stream' fout op GitHub Pages wordt omzeild.
-    -->
-    <script type="text/babel" data-presets="react,typescript" src="index.tsx"></script>
+
+    <script type="text/babel" data-presets="react,typescript">
+        import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            Plus, Search, Mic, FileText, Sparkles, Command, 
+            Loader2, Trash2, MessageSquare, Lightbulb, X, Volume2, Save 
+        } from 'lucide-react';
+        import { GoogleGenAI, Modality } from "@google/genai";
+
+        // --- Types ---
+        type NoteType = 'text' | 'voice' | 'idea';
+
+        interface Note {
+            id: string;
+            title: string;
+            content: string;
+            type: NoteType;
+            createdAt: number;
+            tags: string[];
+        }
+
+        // --- Services & Helpers ---
+        const getGeminiClient = () => {
+            const apiKey = process.env.API_KEY;
+            return new GoogleGenAI({ apiKey: apiKey || "" });
+        };
+
+        const summarizeNote = async (content: string): Promise<string> => {
+            const ai = getGeminiClient();
+            const response = await ai.models.generateContent({
+                model: 'gemini-3-flash-preview',
+                contents: `Vat de volgende notitie kort samen in maximaal 8 woorden. Antwoord alleen met de samenvatting: "${content}"`,
+            });
+            return response.text?.trim() || "Nieuwe notitie";
+        };
+
+        const categorizeNote = async (content: string): Promise<string[]> => {
+            const ai = getGeminiClient();
+            const response = await ai.models.generateContent({
+                model: 'gemini-3-flash-preview',
+                contents: `Geef maximaal 3 korte tags voor deze notitie. Gebruik alleen kleine letters, kommagescheiden: "${content}"`,
+            });
+            return (response.text || "").split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
+        };
+
+        function encodeAudio(bytes: Uint8Array) {
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+            return btoa(binary);
+        }
+
+        function decodeAudio(base64: string) {
+            const binaryString = atob(base64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+            return bytes;
+        }
+
+        async function decodeAudioToBuffer(data: Uint8Array, ctx: AudioContext, sampleRate: number, numChannels: number): Promise<AudioBuffer> {
+            const dataInt16 = new Int16Array(data.buffer);
+            const frameCount = dataInt16.length / numChannels;
+            const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+            for (let channel = 0; channel < numChannels; channel++) {
+                const channelData = buffer.getChannelData(channel);
+                for (let i = 0; i < frameCount; i++) channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+            }
+            return buffer;
+        }
+
+        // --- Components ---
+
+        const NoteCard = ({ note, onDelete }: { note: Note, onDelete: (id: string) => void }) => {
+            const getTypeIcon = () => {
+                switch (note.type) {
+                    case 'voice': return <Mic className="w-4 h-4 text-blue-500" />;
+                    case 'idea': return <Lightbulb className="w-4 h-4 text-amber-500" />;
+                    default: return <MessageSquare className="w-4 h-4 text-emerald-500" />;
+                }
+            };
+
+            const formatDate = (timestamp: number) => {
+                return new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp));
+            };
+
+            return (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-all group relative flex flex-col h-full note-card-enter">
+                    <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                            {getTypeIcon()}
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{note.type}</span>
+                        </div>
+                        <button onClick={() => onDelete(note.id)} className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 p-1">
+                            <Trash2 className="w-4 h-4" />
+                        </button>
+                    </div>
+                    <h3 className="font-bold text-gray-800 mb-2 text-lg leading-tight">{note.title}</h3>
+                    <p className="text-gray-600 text-sm flex-grow whitespace-pre-wrap line-clamp-4 mb-4">{note.content}</p>
+                    <div className="pt-3 border-t border-gray-50 flex flex-wrap gap-1 items-center">
+                        {note.tags.map((tag, idx) => (
+                            <span key={idx} className="px-2 py-0.5 bg-gray-50 text-gray-400 text-[10px] rounded-md font-bold uppercase tracking-tighter">#{tag}</span>
+                        ))}
+                        <span className="ml-auto text-[10px] text-gray-300 font-medium italic">{formatDate(note.createdAt)}</span>
+                    </div>
+                </div>
+            );
+        };
+
+        const VoiceAssistant = ({ onClose, onSaveNote }: { onClose: () => void, onSaveNote: (note: Partial<Note>) => void }) => {
+            const [isRecording, setIsRecording] = useState(false);
+            const [transcription, setTranscription] = useState('');
+            const [aiResponse, setAiResponse] = useState('');
+            const [isConnecting, setIsConnecting] = useState(false);
+
+            const inputAudioCtxRef = useRef<AudioContext | null>(null);
+            const outputAudioCtxRef = useRef<AudioContext | null>(null);
+            const nextStartTimeRef = useRef<number>(0);
+            const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+            const sessionRef = useRef<any>(null);
+            const streamRef = useRef<MediaStream | null>(null);
+
+            const cleanup = useCallback(() => {
+                setIsRecording(false);
+                setIsConnecting(false);
+                if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
+                if (sessionRef.current) try { sessionRef.current.close(); } catch (e) {}
+                sourcesRef.current.forEach(s => { try { s.stop(); } catch(e){} });
+                sourcesRef.current.clear();
+                if (inputAudioCtxRef.current) inputAudioCtxRef.current.close().catch(() => {});
+                if (outputAudioCtxRef.current) outputAudioCtxRef.current.close().catch(() => {});
+                inputAudioCtxRef.current = null;
+                outputAudioCtxRef.current = null;
+                nextStartTimeRef.current = 0;
+            }, []);
+
+            const startSession = async () => {
+                if (isConnecting || isRecording) return;
+                setIsConnecting(true);
+                setTranscription('');
+                setAiResponse('');
+                try {
+                    const AudioContextClass = (window.AudioContext || (window as any).webkitAudioContext);
+                    const inputCtx = new AudioContextClass({ sampleRate: 16000 });
+                    const outputCtx = new AudioContextClass({ sampleRate: 24000 });
+                    await Promise.all([inputCtx.resume(), outputCtx.resume()]);
+                    inputAudioCtxRef.current = inputCtx;
+                    outputAudioCtxRef.current = outputCtx;
+
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    streamRef.current = stream;
+
+                    const ai = getGeminiClient();
+                    const sessionPromise = ai.live.connect({
+                        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+                        callbacks: {
+                            onopen: () => {
+                                setIsRecording(true);
+                                setIsConnecting(false);
+                                const source = inputCtx.createMediaStreamSource(stream);
+                                const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
+                                scriptProcessor.onaudioprocess = (e) => {
+                                    if (inputCtx.state !== 'running') return;
+                                    const inputData = e.inputBuffer.getChannelData(0);
+                                    const int16 = new Int16Array(inputData.length);
+                                    for (let i = 0; i < inputData.length; i++) int16[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
+                                    sessionPromise.then(s => s.sendRealtimeInput({ media: { data: encodeAudio(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' } }));
+                                };
+                                source.connect(scriptProcessor);
+                                scriptProcessor.connect(inputCtx.destination);
+                            },
+                            onmessage: async (message) => {
+                                if (message.serverContent?.outputTranscription) setAiResponse(prev => prev + message.serverContent.outputTranscription.text);
+                                if (message.serverContent?.inputTranscription) setTranscription(prev => prev + message.serverContent.inputTranscription.text);
+                                const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+                                if (audioData && outputAudioCtxRef.current) {
+                                    const buffer = await decodeAudioToBuffer(decodeAudio(audioData), outputAudioCtxRef.current, 24000, 1);
+                                    const source = outputAudioCtxRef.current.createBufferSource();
+                                    source.buffer = buffer;
+                                    source.connect(outputAudioCtxRef.current.destination);
+                                    const st = Math.max(nextStartTimeRef.current, outputAudioCtxRef.current.currentTime);
+                                    source.start(st);
+                                    nextStartTimeRef.current = st + buffer.duration;
+                                    sourcesRef.current.add(source);
+                                    source.onended = () => sourcesRef.current.delete(source);
+                                }
+                                if (message.serverContent?.interrupted) {
+                                    sourcesRef.current.forEach(s => { try { s.stop(); } catch(e){} });
+                                    sourcesRef.current.clear();
+                                    nextStartTimeRef.current = 0;
+                                }
+                            },
+                            onerror: (e) => { console.error(e); cleanup(); },
+                            onclose: () => cleanup()
+                        },
+                        config: {
+                            responseModalities: [Modality.AUDIO],
+                            systemInstruction: 'Je bent IdeaSpark Assistent. Help de gebruiker zijn gedachten te ordenen. Wees kort van stof in het Nederlands.',
+                            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } },
+                            outputAudioTranscription: {},
+                            inputAudioTranscription: {}
+                        }
+                    });
+                    sessionRef.current = await sessionPromise;
+                } catch (err) { console.error(err); cleanup(); }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[100] p-4 animate-in fade-in duration-300">
+                    <div className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95">
+                        <div className="bg-emerald-600 p-6 flex justify-between items-center text-white">
+                            <div className="flex items-center gap-3"><Volume2 className="w-5 h-5" /><h2 className="text-lg font-bold">Live Assistent</h2></div>
+                            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X className="w-5 h-5" /></button>
+                        </div>
+                        <div className="p-8 space-y-8">
+                            <div className="flex flex-col items-center">
+                                <button onClick={isRecording ? cleanup : startSession} disabled={isConnecting} 
+                                    className={`w-24 h-24 rounded-full flex items-center justify-center shadow-xl transition-all transform active:scale-75 ${isRecording ? 'bg-red-500 ring-8 ring-red-50' : 'bg-emerald-500 ring-8 ring-emerald-50'}`}>
+                                    {isConnecting ? <Loader2 className="w-10 h-10 text-white animate-spin" /> : <Mic className={`w-10 h-10 text-white ${isRecording ? 'animate-pulse' : ''}`} />}
+                                </button>
+                                <p className="mt-6 font-black text-gray-300 uppercase tracking-[0.2em] text-[10px]">{isConnecting ? 'VERBINDEN...' : isRecording ? 'IK LUISTER...' : 'TIK OM TE STARTEN'}</p>
+                            </div>
+                            <div className="space-y-4 max-h-[25vh] overflow-y-auto pr-2 custom-scrollbar min-h-[120px] flex flex-col">
+                                {transcription && <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 self-end max-w-[90%] text-sm text-gray-600">{transcription}</div>}
+                                {aiResponse && <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 self-start max-w-[90%] text-sm font-medium text-emerald-900">{aiResponse}</div>}
+                                {!transcription && !aiResponse && !isRecording && <p className="text-center text-gray-300 text-sm italic py-4">Deel een idee of stel een vraag...</p>}
+                            </div>
+                            {(transcription || aiResponse) && (
+                                <button onClick={() => { onSaveNote({ title: transcription.substring(0, 30) || "Gesproken Notitie", content: `${transcription}\n\nAntwoord: ${aiResponse}`, tags: ['spraak'] }); onClose(); }}
+                                    className="w-full flex items-center justify-center gap-2 bg-gray-900 text-white py-4 rounded-2xl font-bold hover:bg-black transition-all shadow-lg active:scale-95">
+                                    <Save className="w-4 h-4" /> Notitie Opslaan
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Main App ---
+
+        const App = () => {
+            const [notes, setNotes] = useState<Note[]>(() => {
+                const saved = localStorage.getItem('ideaspark_notes_v2');
+                return saved ? JSON.parse(saved) : [];
+            });
+            const [searchQuery, setSearchQuery] = useState('');
+            const [newNoteContent, setNewNoteContent] = useState('');
+            const [isVoiceOpen, setIsVoiceOpen] = useState(false);
+            const [isProcessing, setIsProcessing] = useState(false);
+            const [filterType, setFilterType] = useState<NoteType | 'all'>('all');
+
+            useEffect(() => { localStorage.setItem('ideaspark_notes_v2', JSON.stringify(notes)); }, [notes]);
+
+            const handleAddNote = async () => {
+                const content = newNoteContent.trim();
+                if (!content || isProcessing) return;
+                setIsProcessing(true);
+                const id = Math.random().toString(36).substr(2, 9);
+                const tempNote: Note = { id, title: "Analyseert...", content, type: 'text', createdAt: Date.now(), tags: [] };
+                setNotes(prev => [tempNote, ...prev]);
+                setNewNoteContent('');
+                try {
+                    const [title, tags] = await Promise.all([summarizeNote(content), categorizeNote(content)]);
+                    const type: NoteType = tags.includes('idee') || tags.includes('concept') ? 'idea' : 'text';
+                    setNotes(prev => prev.map(n => n.id === id ? { ...n, title, tags, type } : n));
+                } catch (err) {
+                    setNotes(prev => prev.map(n => n.id === id ? { ...n, title: content.substring(0, 25) + "...", tags: ['notitie'] } : n));
+                } finally { setIsProcessing(false); }
+            };
+
+            const filteredNotes = useMemo(() => {
+                return notes
+                    .filter(n => filterType === 'all' || n.type === filterType)
+                    .filter(n => n.content.toLowerCase().includes(searchQuery.toLowerCase()) || n.title.toLowerCase().includes(searchQuery.toLowerCase()) || n.tags.some(t => t.includes(searchQuery.toLowerCase())));
+            }, [notes, searchQuery, filterType]);
+
+            return (
+                <div className="min-h-screen bg-gray-50 text-gray-900 pb-32">
+                    <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-xl border-b border-gray-100">
+                        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="bg-emerald-600 p-2 rounded-xl shadow-lg shadow-emerald-200"><Sparkles className="w-5 h-5 text-white" /></div>
+                                <h1 className="text-xl font-black tracking-tighter text-gray-900">IdeaSpark</h1>
+                            </div>
+                            <div className="flex-grow max-w-md mx-6 relative">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                <input type="text" placeholder="Doorzoek je genie..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="w-full bg-gray-100/50 border-none rounded-2xl py-2.5 pl-10 pr-4 text-sm focus:ring-2 focus:ring-emerald-500 transition-all outline-none" />
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="max-w-6xl mx-auto px-6 py-8">
+                        <section className="mb-12">
+                            <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden focus-within:ring-4 focus-within:ring-emerald-500/5 transition-all">
+                                <textarea placeholder="Welk briljant idee heb je vandaag?" value={newNoteContent} onChange={(e) => setNewNoteContent(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleAddNote(); } }}
+                                    className="w-full min-h-[140px] p-8 text-lg border-none focus:ring-0 outline-none resize-none placeholder-gray-200 font-medium" />
+                                <div className="flex items-center justify-between px-8 py-5 border-t border-gray-50 bg-gray-50/30">
+                                    <div className="flex items-center gap-3 text-gray-300">
+                                        <Command className="w-4 h-4" /><span className="text-[10px] font-bold uppercase tracking-widest">CMD + ENTER</span>
+                                    </div>
+                                    <button onClick={handleAddNote} disabled={!newNoteContent.trim() || isProcessing}
+                                        className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-100 text-white px-8 py-3 rounded-2xl font-black flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-emerald-200/50">
+                                        {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-5 h-5" />}
+                                        <span>Notitie Opslaan</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </section>
+
+                        <div className="flex items-center gap-2 mb-8 overflow-x-auto pb-2 custom-scrollbar">
+                            {(['all', 'idea', 'voice', 'text'] as const).map(t => (
+                                <button key={t} onClick={() => setFilterType(t)}
+                                    className={`px-5 py-2 rounded-full text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${filterType === t ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-100' : 'bg-white text-gray-400 hover:bg-gray-100'}`}>
+                                    {t === 'all' ? 'Alles' : t === 'idea' ? 'Ideeën' : t === 'voice' ? 'Spraak' : 'Notities'}
+                                </button>
+                            ))}
+                        </div>
+
+                        {filteredNotes.length > 0 ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                {filteredNotes.map(note => <NoteCard key={note.id} note={note} onDelete={(id) => setNotes(prev => prev.filter(n => n.id !== id))} />)}
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center py-24 bg-white rounded-[3rem] border-2 border-dashed border-gray-100">
+                                <div className="bg-gray-50 p-6 rounded-full mb-4"><FileText className="w-10 h-10 text-gray-200" /></div>
+                                <p className="text-gray-400 font-bold uppercase tracking-widest text-xs">Leeg blad, vol potentie</p>
+                            </div>
+                        )}
+                    </main>
+
+                    <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-40 group">
+                        <div className="absolute inset-0 bg-emerald-400 rounded-full blur-2xl opacity-20 group-hover:opacity-40 transition-opacity"></div>
+                        <button onClick={() => setIsVoiceOpen(true)}
+                            className="relative bg-emerald-600 hover:bg-emerald-700 text-white w-20 h-20 rounded-full shadow-2xl flex items-center justify-center transition-all active:scale-90 transform group-hover:-translate-y-1">
+                            <Mic className="w-8 h-8" />
+                        </button>
+                    </div>
+
+                    {isVoiceOpen && <VoiceAssistant onClose={() => setIsVoiceOpen(false)} onSaveNote={(n) => setNotes(prev => [{ id: Math.random().toString(36).substr(2, 9), createdAt: Date.now(), title: n.title!, content: n.content!, type: 'voice', tags: n.tags! }, ...prev])} />}
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root')!);
+        root.render(<App />);
+    </script>
 </body>
 </html>
