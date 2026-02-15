@@ -3,7 +3,7 @@
 <html lang="nl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>IdeaSpark</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,6 +14,7 @@
             font-family: 'Inter', sans-serif;
             background-color: #f9fafb;
             -webkit-tap-highlight-color: transparent;
+            overscroll-behavior-y: none;
         }
         .custom-scrollbar::-webkit-scrollbar {
             width: 4px;
@@ -26,9 +27,6 @@
             border-radius: 10px;
         }
     </style>
-    <script>
-      window.process = { env: { API_KEY: "" } }; // Placeholder, wordt extern ingevuld
-    </script>
     <script type="importmap">
 {
   "imports": {

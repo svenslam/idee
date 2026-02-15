@@ -24,28 +24,32 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
   const streamRef = useRef<MediaStream | null>(null);
 
   const cleanup = useCallback(() => {
+    setIsRecording(false);
+    setIsConnecting(false);
+
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
+    
     if (sessionRef.current) {
       try { sessionRef.current.close(); } catch (e) {}
       sessionRef.current = null;
     }
+
     sourcesRef.current.forEach(s => { try { s.stop(); } catch(e){} });
     sourcesRef.current.clear();
     
-    if (inputAudioCtxRef.current) {
+    if (inputAudioCtxRef.current && inputAudioCtxRef.current.state !== 'closed') {
       inputAudioCtxRef.current.close().catch(() => {});
-      inputAudioCtxRef.current = null;
     }
-    if (outputAudioCtxRef.current) {
+    if (outputAudioCtxRef.current && outputAudioCtxRef.current.state !== 'closed') {
       outputAudioCtxRef.current.close().catch(() => {});
-      outputAudioCtxRef.current = null;
     }
     
-    setIsRecording(false);
-    setIsConnecting(false);
+    inputAudioCtxRef.current = null;
+    outputAudioCtxRef.current = null;
+    nextStartTimeRef.current = 0;
   }, []);
 
   const startSession = async () => {
@@ -56,16 +60,19 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
     setAiResponse('');
     
     try {
-      // CRUCIAAL VOOR iOS: AudioContext moet worden aangemaakt/hervat binnen de click handler
-      const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      // 1. Maak AudioContexts aan (moet in click handler voor iOS)
+      const AudioContextClass = (window.AudioContext || (window as any).webkitAudioContext);
+      const inputCtx = new AudioContextClass({ sampleRate: 16000 });
+      const outputCtx = new AudioContextClass({ sampleRate: 24000 });
       
-      // Forceer resume (nodig voor Safari)
-      await Promise.all([inputCtx.resume(), outputCtx.resume()]);
+      // 2. Resume contexts direct (essentieel voor Safari)
+      if (inputCtx.state === 'suspended') await inputCtx.resume();
+      if (outputCtx.state === 'suspended') await outputCtx.resume();
       
       inputAudioCtxRef.current = inputCtx;
       outputAudioCtxRef.current = outputCtx;
 
+      // 3. Vraag microfoon permissie
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
@@ -87,7 +94,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
             const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
             
             scriptProcessor.onaudioprocess = (e) => {
-              if (!isRecording) return;
+              if (inputCtx.state !== 'running') return;
               const inputData = e.inputBuffer.getChannelData(0);
               const int16 = new Int16Array(inputData.length);
               for (let i = 0; i < inputData.length; i++) {
@@ -99,7 +106,9 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
               };
               
               sessionPromise.then(session => {
-                if (session) session.sendRealtimeInput({ media: pcmBlob });
+                if (session && inputAudioCtxRef.current) {
+                  session.sendRealtimeInput({ media: pcmBlob });
+                }
               }).catch(() => {});
             };
 
@@ -117,13 +126,17 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
             const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
             if (audioData && outputAudioCtxRef.current) {
               const currentCtx = outputAudioCtxRef.current;
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, currentCtx.currentTime);
+              if (currentCtx.state === 'suspended') await currentCtx.resume();
+              
               const buffer = await decodeAudioData(decode(audioData), currentCtx, 24000, 1);
               const source = currentCtx.createBufferSource();
               source.buffer = buffer;
               source.connect(currentCtx.destination);
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += buffer.duration;
+              
+              const startTime = Math.max(nextStartTimeRef.current, currentCtx.currentTime);
+              source.start(startTime);
+              nextStartTimeRef.current = startTime + buffer.duration;
+              
               sourcesRef.current.add(source);
               source.onended = () => sourcesRef.current.delete(source);
             }
@@ -135,7 +148,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
             }
           },
           onerror: (e) => {
-            console.error('Session error:', e);
+            console.error('Gemini Session Error:', e);
             cleanup();
           },
           onclose: () => cleanup()
@@ -153,7 +166,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
 
       sessionRef.current = await sessionPromise;
     } catch (error) {
-      console.error('Failed to start voice session:', error);
+      console.error('Failed to start session:', error);
       cleanup();
     }
   };
@@ -163,14 +176,14 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
   }, [cleanup]);
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in-95">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-[100] p-4 animate-in fade-in duration-300">
+      <div className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
         <div className="bg-emerald-600 p-6 flex justify-between items-center text-white">
           <div className="flex items-center gap-3">
             <Volume2 className="w-5 h-5" />
-            <h2 className="text-lg font-bold">Live Assistent</h2>
+            <h2 className="text-lg font-bold">Assistent</h2>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors active:scale-90">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -180,7 +193,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
             <button
               onClick={isRecording ? cleanup : startSession}
               disabled={isConnecting}
-              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-xl transition-all transform active:scale-90 ${
+              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-xl transition-all transform active:scale-75 touch-none ${
                 isRecording 
                   ? 'bg-red-500 ring-8 ring-red-50' 
                   : 'bg-emerald-500 ring-8 ring-emerald-50'
@@ -192,24 +205,24 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
                 <Mic className={`w-10 h-10 text-white ${isRecording ? 'animate-pulse' : ''}`} />
               )}
             </button>
-            <p className="mt-6 font-bold text-gray-400 uppercase tracking-widest text-[10px]">
+            <p className="mt-6 font-bold text-gray-400 uppercase tracking-widest text-[10px] pointer-events-none">
               {isConnecting ? 'VERBINDEN...' : isRecording ? 'IK LUISTER...' : 'TIK OM TE STARTEN'}
             </p>
           </div>
 
-          <div className="space-y-4 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar min-h-[100px] flex flex-col">
+          <div className="space-y-4 max-h-[30vh] overflow-y-auto pr-2 custom-scrollbar min-h-[100px] flex flex-col">
             {transcription && (
-              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 self-end max-w-[90%]">
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 self-end max-w-[90%] animate-in slide-in-from-right-4">
                 <p className="text-gray-700 text-sm leading-relaxed">{transcription}</p>
               </div>
             )}
             {aiResponse && (
-              <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 self-start max-w-[90%]">
+              <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 self-start max-w-[90%] animate-in slide-in-from-left-4">
                 <p className="text-gray-800 text-sm font-medium leading-relaxed">{aiResponse}</p>
               </div>
             )}
             {!transcription && !aiResponse && !isConnecting && !isRecording && (
-              <p className="text-center text-gray-300 text-sm italic mt-4">Stel een vraag over je ideeën of maak een snelle notitie.</p>
+              <p className="text-center text-gray-300 text-sm italic mt-4 px-4">Stel een vraag of vertel me je idee.</p>
             )}
           </div>
 
@@ -226,7 +239,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = ({ onClose, onSaveNote }) 
               className="w-full flex items-center justify-center gap-2 bg-gray-900 text-white py-4 rounded-2xl font-bold hover:bg-black transition-all shadow-lg active:scale-95"
             >
               <Save className="w-4 h-4" />
-              Opslaan als notitie
+              Opslaan in IdeaSpark
             </button>
           )}
         </div>
