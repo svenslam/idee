@@ -19,29 +19,7 @@ interface Note {
     tags: string[];
 }
 
-// --- Utils ---
-const getGeminiClient = () => new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-
-const aiProcess = async (content: string) => {
-    const ai = getGeminiClient();
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: `Analyseer deze notitie: "${content}". 
-            Geef een JSON object terug met: 
-            1. "title": een korte pakkende titel (max 5 woorden).
-            2. "tags": 2 of 3 korte tags.
-            3. "type": of het een "idea" of "text" is.
-            Antwoord ENKEL met de JSON code.`,
-            config: { responseMimeType: "application/json" }
-        });
-        return JSON.parse(response.text || "{}");
-    } catch (e) {
-        console.error("AI Analysis error:", e);
-        return { title: content.substring(0, 20), tags: ["notitie"], type: "text" };
-    }
-};
-
+// --- Audio Helpers ---
 const encodeAudio = (bytes: Uint8Array): string => {
     let binary = '';
     for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
@@ -66,6 +44,27 @@ const decodeAudioToBuffer = async (data: Uint8Array, ctx: AudioContext, sampleRa
         }
     }
     return buffer;
+};
+
+// --- AI Utils ---
+const aiProcess = async (content: string) => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-3-flash-preview',
+            contents: `Analyseer deze notitie: "${content}". 
+            Geef een JSON object terug met: 
+            1. "title": een korte titel (max 5 woorden).
+            2. "tags": 2 of 3 korte tags.
+            3. "type": of het een "idea" of "text" is.
+            Antwoord ENKEL met de JSON.`,
+            config: { responseMimeType: "application/json" }
+        });
+        return JSON.parse(response.text || "{}");
+    } catch (e) {
+        console.error("AI Analysis error:", e);
+        return { title: content.substring(0, 20), tags: ["notitie"], type: "text" };
+    }
 };
 
 // --- Components ---
@@ -97,22 +96,20 @@ const VoiceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (note: P
         setStatus('Verbinden...');
         try {
             const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
-            if (!AudioContextClass) throw new Error("AudioContext niet ondersteund");
-            
             const inputCtx = new AudioContextClass({ sampleRate: 16000 });
             const outputCtx = new AudioContextClass({ sampleRate: 24000 });
             inputAudioCtxRef.current = inputCtx;
             outputAudioCtxRef.current = outputCtx;
 
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const ai = getGeminiClient();
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
             
             const sessionPromise = ai.live.connect({
                 model: 'gemini-2.5-flash-native-audio-preview-12-2025',
                 callbacks: {
                     onopen: () => {
                         setIsRecording(true);
-                        setStatus('Luisteren...');
+                        setStatus('AI luistert...');
                         const source = inputCtx.createMediaStreamSource(stream);
                         const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
                         scriptProcessor.onaudioprocess = (e: any) => {
@@ -149,7 +146,7 @@ const VoiceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (note: P
                 },
                 config: {
                     responseModalities: [Modality.AUDIO],
-                    systemInstruction: 'Je bent een hulpvaardige assistent voor snelle notities. Houd je antwoorden kort en bondig in het Nederlands.',
+                    systemInstruction: 'Je bent IdeaSpark AI, een snelle assistent voor notities en breinstormen. Reageer kort en bondig in het Nederlands.',
                     inputAudioTranscription: {},
                     outputAudioTranscription: {}
                 }
@@ -174,7 +171,7 @@ const VoiceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (note: P
                     </div>
 
                     <h2 className="text-xl font-bold text-slate-800 mb-2">{status}</h2>
-                    <p className="text-sm text-slate-500 mb-8 px-4">Spreek je idee in of stel een snelle vraag.</p>
+                    <p className="text-sm text-slate-500 mb-8 px-4">Spreek een idee in of stel een vraag.</p>
 
                     <div className="w-full bg-slate-50 rounded-2xl p-5 min-h-[120px] max-h-[200px] overflow-y-auto mb-8 text-left space-y-4 text-sm border border-slate-100">
                         {transcription && <div className="text-slate-600 italic">"{transcription}"</div>}
@@ -183,7 +180,7 @@ const VoiceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (note: P
                     </div>
 
                     {!isRecording ? (
-                        <button onClick={startSession} className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold shadow-lg shadow-emerald-200 transition-all">
+                        <button onClick={startSession} className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold transition-all shadow-lg shadow-emerald-100">
                             Start Gesprek
                         </button>
                     ) : (
@@ -234,7 +231,7 @@ const NoteCard: React.FC<{ note: Note, onDelete: (id: string) => void }> = ({ no
 
 const App = () => {
     const [notes, setNotes] = useState<Note[]>(() => {
-        const saved = localStorage.getItem('ideaspark_notes_v3');
+        const saved = localStorage.getItem('ideaspark_notes_final');
         return saved ? JSON.parse(saved) : [];
     });
     const [input, setInput] = useState('');
@@ -242,7 +239,7 @@ const App = () => {
     const [isProcessing, setIsProcessing] = useState(false);
     const [isVoiceOpen, setIsVoiceOpen] = useState(false);
 
-    useEffect(() => localStorage.setItem('ideaspark_notes_v3', JSON.stringify(notes)), [notes]);
+    useEffect(() => localStorage.setItem('ideaspark_notes_final', JSON.stringify(notes)), [notes]);
 
     const handleSaveNote = async () => {
         if (!input.trim() || isProcessing) return;
@@ -279,13 +276,13 @@ const App = () => {
                 </div>
                 <div className="relative flex-grow max-w-sm mx-4">
                     <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input type="text" placeholder="Doorzoek ideeën..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-slate-100/60 rounded-2xl py-2.5 pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-emerald-500/20" />
+                    <input type="text" placeholder="Zoeken..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-slate-100/60 rounded-2xl py-2.5 pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-emerald-500/20" />
                 </div>
             </nav>
 
             <main className="max-w-6xl mx-auto px-6 py-12">
                 <div className="mb-16 max-w-2xl mx-auto bg-white rounded-[2.5rem] shadow-xl p-3 border border-slate-100">
-                    <textarea className="w-full bg-transparent border-none focus:ring-0 p-6 text-lg font-medium placeholder-slate-300 min-h-[140px] resize-none" placeholder="Wat wil je onthouden?" value={input} onChange={e => setInput(e.target.value)} />
+                    <textarea className="w-full bg-transparent border-none focus:ring-0 p-6 text-lg font-medium placeholder-slate-300 min-h-[140px] resize-none" placeholder="Typ je idee of notitie..." value={input} onChange={e => setInput(e.target.value)} />
                     <div className="flex items-center justify-between p-3 bg-slate-50 rounded-[1.8rem]">
                         <div className="flex items-center gap-2 text-slate-400 text-[10px] font-bold px-4 tracking-widest uppercase"><Command className="w-3 h-3" /> CTRL+ENTER</div>
                         <button onClick={handleSaveNote} disabled={!input.trim() || isProcessing} className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 text-white px-8 py-3.5 rounded-2xl font-bold flex items-center gap-2 transition-all">
@@ -295,13 +292,17 @@ const App = () => {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-                    {filteredNotes.map(note => <NoteCard key={note.id} note={note} onDelete={id => setNotes(prev => prev.filter(n => n.id !== id))} />)}
+                    {filteredNotes.length > 0 ? filteredNotes.map(note => (
+                        <NoteCard key={note.id} note={note} onDelete={id => setNotes(prev => prev.filter(n => n.id !== id))} />
+                    )) : (
+                        <div className="col-span-full py-20 text-center text-slate-300">Nog geen notities...</div>
+                    )}
                 </div>
             </main>
 
             <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-40">
                 <button onClick={() => setIsVoiceOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white px-10 py-6 rounded-full shadow-2xl flex items-center gap-3 transition-transform hover:scale-105 active:scale-95">
-                    <Mic className="w-6 h-6" /> <span className="font-extrabold">Praat met IdeaSpark AI</span>
+                    <Mic className="w-6 h-6" /> <span className="font-extrabold">Live AI Assistant</span>
                 </button>
             </div>
 
