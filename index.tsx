@@ -2,8 +2,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import { 
-    Plus, Search, Mic, FileText, Sparkles, Command, 
-    Loader2, Trash2, MessageSquare, Lightbulb, X, Volume2, Save, Send
+    Search, Mic, FileText, Sparkles, Command, 
+    Loader2, Trash2, MessageSquare, Lightbulb, X, Save, Send
 } from 'lucide-react';
 import { GoogleGenAI, Modality } from "@google/genai";
 
@@ -20,9 +20,7 @@ interface Note {
 }
 
 // --- Utils ---
-const getGeminiClient = () => {
-    return new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-};
+const getGeminiClient = () => new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
 const aiProcess = async (content: string) => {
     const ai = getGeminiClient();
@@ -39,7 +37,7 @@ const aiProcess = async (content: string) => {
         });
         return JSON.parse(response.text || "{}");
     } catch (e) {
-        console.error("AI Processing failed", e);
+        console.error("AI Analysis error:", e);
         return { title: content.substring(0, 20), tags: ["notitie"], type: "text" };
     }
 };
@@ -98,9 +96,8 @@ const VoiceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (note: P
     const startSession = async () => {
         setStatus('Verbinden...');
         try {
-            // Fix: more resilient AudioContext initialization
             const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
-            if (!AudioContextClass) throw new Error("Browser supports no AudioContext");
+            if (!AudioContextClass) throw new Error("AudioContext niet ondersteund");
             
             const inputCtx = new AudioContextClass({ sampleRate: 16000 });
             const outputCtx = new AudioContextClass({ sampleRate: 24000 });
@@ -125,22 +122,15 @@ const VoiceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (note: P
                                 int16[i] = Math.max(-1, Math.min(1, inputData[i])) * 32767;
                             }
                             sessionPromise.then(s => s.sendRealtimeInput({ 
-                                media: { 
-                                    data: encodeAudio(new Uint8Array(int16.buffer)), 
-                                    mimeType: 'audio/pcm;rate=16000' 
-                                } 
+                                media: { data: encodeAudio(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' } 
                             }));
                         };
                         source.connect(scriptProcessor);
                         scriptProcessor.connect(inputCtx.destination);
                     },
                     onmessage: async (msg) => {
-                        if (msg.serverContent?.inputTranscription) {
-                            setTranscription(prev => prev + msg.serverContent.inputTranscription.text);
-                        }
-                        if (msg.serverContent?.outputTranscription) {
-                            setAiResponse(prev => prev + msg.serverContent.outputTranscription.text);
-                        }
+                        if (msg.serverContent?.inputTranscription) setTranscription(prev => prev + msg.serverContent.inputTranscription.text);
+                        if (msg.serverContent?.outputTranscription) setAiResponse(prev => prev + msg.serverContent.outputTranscription.text);
                         
                         const audioData = msg.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
                         if (audioData && outputAudioCtxRef.current) {
@@ -155,10 +145,7 @@ const VoiceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (note: P
                         }
                     },
                     onclose: () => cleanup(),
-                    onerror: (e) => { 
-                        console.error("Gemini Live Error", e);
-                        cleanup(); 
-                    }
+                    onerror: (e) => { console.error(e); cleanup(); }
                 },
                 config: {
                     responseModalities: [Modality.AUDIO],
@@ -169,7 +156,7 @@ const VoiceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (note: P
             });
             sessionRef.current = await sessionPromise;
         } catch (e) {
-            setStatus('Microfoon of AI toegang geweigerd');
+            setStatus('Fout bij toegang');
             console.error(e);
         }
     };
@@ -178,56 +165,44 @@ const VoiceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (note: P
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-[2.5rem] w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
                 <div className="p-8 flex flex-col items-center text-center">
-                    <button onClick={onClose} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-slate-600 transition-colors">
+                    <button onClick={onClose} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-slate-600">
                         <X className="w-6 h-6" />
                     </button>
                     
-                    <div className={`w-24 h-24 rounded-full flex items-center justify-center mb-6 transition-all duration-500 ${isRecording ? 'bg-emerald-500 shadow-[0_0_40px_rgba(16,185,129,0.4)] scale-110' : 'bg-slate-100'}`}>
-                        {isRecording ? <Mic className="w-10 h-10 text-white animate-pulse" /> : <Mic className="w-10 h-10 text-slate-400" />}
+                    <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 transition-all duration-500 ${isRecording ? 'bg-emerald-500 shadow-xl scale-110' : 'bg-slate-100'}`}>
+                        {isRecording ? <Mic className="w-8 h-8 text-white animate-pulse" /> : <Mic className="w-8 h-8 text-slate-400" />}
                     </div>
 
                     <h2 className="text-xl font-bold text-slate-800 mb-2">{status}</h2>
-                    <p className="text-sm text-slate-500 mb-8 px-4">Stel je vraag of spreek een idee in. De AI luistert live.</p>
+                    <p className="text-sm text-slate-500 mb-8 px-4">Spreek je idee in of stel een snelle vraag.</p>
 
                     <div className="w-full bg-slate-50 rounded-2xl p-5 min-h-[120px] max-h-[200px] overflow-y-auto mb-8 text-left space-y-4 text-sm border border-slate-100">
-                        {transcription && (
-                            <div className="flex gap-2">
-                                <MessageSquare className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                                <div className="text-slate-600 italic">"{transcription}"</div>
-                            </div>
-                        )}
-                        {aiResponse && (
-                            <div className="flex gap-2">
-                                <Sparkles className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                                <div className="text-emerald-700 font-medium">{aiResponse}</div>
-                            </div>
-                        )}
+                        {transcription && <div className="text-slate-600 italic">"{transcription}"</div>}
+                        {aiResponse && <div className="text-emerald-700 font-medium">{aiResponse}</div>}
                         {!transcription && !aiResponse && <div className="text-slate-300 text-center py-8">Begin met praten...</div>}
                     </div>
 
                     {!isRecording ? (
-                        <button onClick={startSession} className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold transition-all transform active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-emerald-200">
+                        <button onClick={startSession} className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold shadow-lg shadow-emerald-200 transition-all">
                             Start Gesprek
                         </button>
                     ) : (
                         <div className="flex gap-3 w-full">
-                            <button onClick={cleanup} className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-bold transition-all">
-                                Stop
-                            </button>
+                            <button onClick={cleanup} className="flex-1 py-4 bg-slate-100 text-slate-700 rounded-2xl font-bold">Stop</button>
                             <button 
                                 onClick={() => {
                                     onSave({ 
-                                        title: transcription ? transcription.substring(0, 30) : "Gesproken Notitie", 
+                                        title: transcription ? transcription.substring(0, 30) + "..." : "Voice Note", 
                                         content: `Vraag: ${transcription}\nAntwoord: ${aiResponse}`, 
                                         type: 'voice',
-                                        tags: ['spraak', 'ai-assist']
+                                        tags: ['spraak']
                                     });
                                     onClose();
                                 }} 
                                 disabled={!transcription}
-                                className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                                className="flex-1 py-4 bg-emerald-600 text-white rounded-2xl font-bold disabled:opacity-50"
                             >
-                                <Save className="w-4 h-4" /> Bewaren
+                                <Save className="w-4 h-4 inline mr-2" /> Bewaren
                             </button>
                         </div>
                     )}
@@ -237,39 +212,29 @@ const VoiceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (note: P
     );
 };
 
-const NoteCard: React.FC<{ note: Note, onDelete: (id: string) => void }> = ({ note, onDelete }) => {
-    return (
-        <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all group flex flex-col h-full">
-            <div className="flex justify-between items-start mb-4">
-                <div className={`p-2 rounded-xl ${
-                    note.type === 'idea' ? 'bg-amber-50 text-amber-600' : 
-                    note.type === 'voice' ? 'bg-blue-50 text-blue-600' : 
-                    'bg-emerald-50 text-emerald-600'
-                }`}>
-                    {note.type === 'idea' ? <Lightbulb className="w-4 h-4" /> : note.type === 'voice' ? <Mic className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
-                </div>
-                <button onClick={() => onDelete(note.id)} className="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-red-500 transition-all">
-                    <Trash2 className="w-4 h-4" />
-                </button>
+const NoteCard: React.FC<{ note: Note, onDelete: (id: string) => void }> = ({ note, onDelete }) => (
+    <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all group flex flex-col h-full">
+        <div className="flex justify-between items-start mb-4">
+            <div className={`p-2 rounded-xl ${note.type === 'idea' ? 'bg-amber-50 text-amber-600' : note.type === 'voice' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                {note.type === 'idea' ? <Lightbulb className="w-4 h-4" /> : note.type === 'voice' ? <Mic className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
             </div>
-            <h3 className="font-bold text-slate-800 mb-2 line-clamp-2 leading-snug">{note.title}</h3>
-            <p className="text-slate-500 text-sm mb-6 flex-grow line-clamp-4 whitespace-pre-wrap leading-relaxed">{note.content}</p>
-            <div className="flex flex-wrap gap-2 pt-4 border-t border-slate-50">
-                {note.tags.map(tag => (
-                    <span key={tag} className="text-[10px] font-bold uppercase tracking-wider text-slate-400 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-100">
-                        #{tag}
-                    </span>
-                ))}
-            </div>
+            <button onClick={() => onDelete(note.id)} className="opacity-0 group-hover:opacity-100 p-2 text-slate-300 hover:text-red-500 transition-all">
+                <Trash2 className="w-4 h-4" />
+            </button>
         </div>
-    );
-};
-
-// --- Main App Component ---
+        <h3 className="font-bold text-slate-800 mb-2 line-clamp-2">{note.title}</h3>
+        <p className="text-slate-500 text-sm mb-6 flex-grow line-clamp-4 whitespace-pre-wrap">{note.content}</p>
+        <div className="flex flex-wrap gap-2 pt-4 border-t border-slate-50">
+            {note.tags.map(tag => (
+                <span key={tag} className="text-[10px] font-bold uppercase tracking-wider text-slate-400 bg-slate-50 px-2 py-1 rounded-md">#{tag}</span>
+            ))}
+        </div>
+    </div>
+);
 
 const App = () => {
     const [notes, setNotes] = useState<Note[]>(() => {
-        const saved = localStorage.getItem('ideaspark_notes_v2');
+        const saved = localStorage.getItem('ideaspark_notes_v3');
         return saved ? JSON.parse(saved) : [];
     });
     const [input, setInput] = useState('');
@@ -277,16 +242,13 @@ const App = () => {
     const [isProcessing, setIsProcessing] = useState(false);
     const [isVoiceOpen, setIsVoiceOpen] = useState(false);
 
-    useEffect(() => {
-        localStorage.setItem('ideaspark_notes_v2', JSON.stringify(notes));
-    }, [notes]);
+    useEffect(() => localStorage.setItem('ideaspark_notes_v3', JSON.stringify(notes)), [notes]);
 
     const handleSaveNote = async () => {
         if (!input.trim() || isProcessing) return;
         setIsProcessing(true);
         const content = input.trim();
         setInput('');
-
         try {
             const result = await aiProcess(content);
             const newNote: Note = {
@@ -298,131 +260,55 @@ const App = () => {
                 tags: result.tags || ['notitie']
             };
             setNotes(prev => [newNote, ...prev]);
-        } catch (error) {
-            console.error(error);
         } finally {
             setIsProcessing(false);
         }
     };
 
-    const filteredNotes = useMemo(() => {
-        const query = search.toLowerCase();
-        return notes.filter(n => 
-            n.title.toLowerCase().includes(query) || 
-            n.content.toLowerCase().includes(query) ||
-            n.tags.some(t => t.toLowerCase().includes(query))
-        );
-    }, [notes, search]);
+    const filteredNotes = useMemo(() => notes.filter(n => 
+        n.title.toLowerCase().includes(search.toLowerCase()) || 
+        n.content.toLowerCase().includes(search.toLowerCase())
+    ), [notes, search]);
 
     return (
         <div className="min-h-screen pb-32">
-            {/* Header / Navigation */}
-            <nav className="glass sticky top-0 z-40 border-b border-slate-100">
-                <div className="max-w-6xl mx-auto px-6 h-20 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-200">
-                            <Sparkles className="w-6 h-6 text-white" />
-                        </div>
-                        <h1 className="text-xl font-black text-slate-900 tracking-tight">IdeaSpark</h1>
-                    </div>
-                    
-                    <div className="relative flex-grow max-w-sm mx-4">
-                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                        <input 
-                            type="text" 
-                            placeholder="Doorzoek je ideeën..." 
-                            value={search}
-                            onChange={e => setSearch(e.target.value)}
-                            className="w-full bg-slate-100/60 border border-transparent rounded-2xl py-2.5 pl-11 pr-4 text-sm focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all outline-none"
-                        />
-                    </div>
+            <nav className="glass sticky top-0 z-40 border-b border-slate-100 h-20 flex items-center px-6 justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center"><Sparkles className="w-6 h-6 text-white" /></div>
+                    <h1 className="text-xl font-black text-slate-900 tracking-tight">IdeaSpark</h1>
+                </div>
+                <div className="relative flex-grow max-w-sm mx-4">
+                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input type="text" placeholder="Doorzoek ideeën..." value={search} onChange={e => setSearch(e.target.value)} className="w-full bg-slate-100/60 rounded-2xl py-2.5 pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-emerald-500/20" />
                 </div>
             </nav>
 
             <main className="max-w-6xl mx-auto px-6 py-12">
-                {/* Input Area */}
-                <div className="mb-16 max-w-2xl mx-auto">
-                    <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-slate-200/50 p-3 border border-slate-100 transition-all focus-within:ring-4 ring-emerald-500/5">
-                        <textarea 
-                            className="w-full bg-transparent border-none focus:ring-0 p-6 text-lg font-medium placeholder-slate-300 min-h-[140px] resize-none"
-                            placeholder="Wat wil je onthouden of vragen?"
-                            value={input}
-                            onChange={e => setInput(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleSaveNote(); }}
-                        />
-                        <div className="flex items-center justify-between p-3 bg-slate-50 rounded-[1.8rem]">
-                            <div className="flex items-center gap-2 text-slate-400 text-[10px] font-bold uppercase tracking-widest px-4">
-                                <Command className="w-3 h-3" /> CTRL + ENTER
-                            </div>
-                            <button 
-                                onClick={handleSaveNote}
-                                disabled={!input.trim() || isProcessing}
-                                className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 text-white px-8 py-3.5 rounded-2xl font-bold transition-all transform active:scale-95 shadow-lg shadow-emerald-200 flex items-center gap-2"
-                            >
-                                {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                                <span>Verwerk</span>
-                            </button>
-                        </div>
+                <div className="mb-16 max-w-2xl mx-auto bg-white rounded-[2.5rem] shadow-xl p-3 border border-slate-100">
+                    <textarea className="w-full bg-transparent border-none focus:ring-0 p-6 text-lg font-medium placeholder-slate-300 min-h-[140px] resize-none" placeholder="Wat wil je onthouden?" value={input} onChange={e => setInput(e.target.value)} />
+                    <div className="flex items-center justify-between p-3 bg-slate-50 rounded-[1.8rem]">
+                        <div className="flex items-center gap-2 text-slate-400 text-[10px] font-bold px-4 tracking-widest uppercase"><Command className="w-3 h-3" /> CTRL+ENTER</div>
+                        <button onClick={handleSaveNote} disabled={!input.trim() || isProcessing} className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 text-white px-8 py-3.5 rounded-2xl font-bold flex items-center gap-2 transition-all">
+                            {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Verwerk
+                        </button>
                     </div>
                 </div>
 
-                {/* Notes Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-                    {filteredNotes.length > 0 ? (
-                        filteredNotes.map(note => (
-                            <NoteCard 
-                                key={note.id} 
-                                note={note} 
-                                onDelete={id => setNotes(prev => prev.filter(n => n.id !== id))} 
-                            />
-                        ))
-                    ) : (
-                        <div className="col-span-full py-24 text-center">
-                            <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                                <FileText className="w-8 h-8 text-slate-200" />
-                            </div>
-                            <h3 className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Geen resultaten gevonden</h3>
-                            <p className="text-slate-300 text-sm mt-2">Begin met schrijven of praat met de AI.</p>
-                        </div>
-                    )}
+                    {filteredNotes.map(note => <NoteCard key={note.id} note={note} onDelete={id => setNotes(prev => prev.filter(n => n.id !== id))} />)}
                 </div>
             </main>
 
-            {/* AI Assistant FAB */}
             <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-40">
-                <button 
-                    onClick={() => setIsVoiceOpen(true)}
-                    className="group relative flex items-center gap-3 bg-emerald-600 hover:bg-emerald-700 text-white px-10 py-6 rounded-full shadow-2xl shadow-emerald-200 transition-all transform hover:scale-105 active:scale-90"
-                >
-                    <div className="absolute inset-0 bg-emerald-400 rounded-full blur-2xl opacity-0 group-hover:opacity-40 transition-opacity"></div>
-                    <Mic className="w-6 h-6 relative z-10" />
-                    <span className="font-extrabold tracking-tight relative z-10">Praat met IdeaSpark AI</span>
+                <button onClick={() => setIsVoiceOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white px-10 py-6 rounded-full shadow-2xl flex items-center gap-3 transition-transform hover:scale-105 active:scale-95">
+                    <Mic className="w-6 h-6" /> <span className="font-extrabold">Praat met IdeaSpark AI</span>
                 </button>
             </div>
 
-            {isVoiceOpen && (
-                <VoiceModal 
-                    onClose={() => setIsVoiceOpen(false)} 
-                    onSave={n => {
-                        const newNote: Note = {
-                            id: Math.random().toString(36).substr(2, 9),
-                            title: n.title || "Spraak-notitie",
-                            content: n.content || "",
-                            type: n.type || 'voice',
-                            createdAt: Date.now(),
-                            tags: n.tags || ['spraak']
-                        };
-                        setNotes(prev => [newNote, ...prev]);
-                    }} 
-                />
-            )}
+            {isVoiceOpen && <VoiceModal onClose={() => setIsVoiceOpen(false)} onSave={n => setNotes(prev => [{ ...n, id: Math.random().toString(36).substr(2, 9), createdAt: Date.now() } as Note, ...prev])} />}
         </div>
     );
 };
 
-// Render
 const container = document.getElementById('root');
-if (container) {
-    const root = createRoot(container);
-    root.render(<App />);
-}
+if (container) createRoot(container).render(<App />);
