@@ -89,10 +89,10 @@ const VoiceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (note: P
     const cleanup = useCallback(() => {
         setIsRecording(false);
         if (sessionRef.current) {
-            try { sessionRef.current.close(); } catch(e){}
+            try { sessionRef.current.close(); } catch { /* ignore */ }
         }
         sourcesRef.current.forEach(s => {
-            try { s.stop(); } catch(e){}
+            try { s.stop(); } catch { /* ignore */ }
         });
         sourcesRef.current.clear();
         if (inputAudioCtxRef.current) {
@@ -244,7 +244,10 @@ const VoiceModal = ({ onClose, onSave }: { onClose: () => void, onSave: (note: P
     );
 };
 
-const NoteCard: React.FC<{ note: Note, onDelete: (id: string) => void }> = ({ note, onDelete }) => (
+const NoteCard: React.FC<{ 
+    note: Note, 
+    onDelete: (id: string) => void
+}> = ({ note, onDelete }) => (
     <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all group flex flex-col h-full">
         <div className="flex justify-between items-start mb-4">
             <div className={`p-2 rounded-xl ${
@@ -321,15 +324,15 @@ const App = () => {
                     <h1 className="text-xl font-black text-slate-900 tracking-tight">IdeaSpark</h1>
                 </div>
                 <div className="relative flex-grow max-w-sm mx-4">
-                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input 
-                        type="text" 
-                        placeholder="Zoek in je ideeën..." 
-                        value={search} 
-                        onChange={e => setSearch(e.target.value)} 
-                        className="w-full bg-slate-100/60 rounded-2xl py-2.5 pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:bg-white transition-all" 
-                    />
-                </div>
+                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <input 
+                            type="text" 
+                            placeholder="Zoek in je ideeën..." 
+                            value={search} 
+                            onChange={e => setSearch(e.target.value)} 
+                            className="w-full bg-slate-100/60 rounded-2xl py-2.5 pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 focus:bg-white transition-all" 
+                        />
+                    </div>
             </nav>
 
             <main className="max-w-6xl mx-auto px-6 py-12">
@@ -362,7 +365,11 @@ const App = () => {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
                     {filteredNotes.length > 0 ? filteredNotes.map(note => (
-                        <NoteCard key={note.id} note={note} onDelete={id => setNotes(prev => prev.filter(n => n.id !== id))} />
+                        <NoteCard 
+                            key={note.id} 
+                            note={note} 
+                            onDelete={id => setNotes(prev => prev.filter(n => n.id !== id))}
+                        />
                     )) : (
                         <div className="col-span-full py-32 text-center">
                             <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6">
