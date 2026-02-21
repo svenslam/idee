@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
+import './index.css';
 import { 
     Search, Mic, FileText, Sparkles, Command, 
     Loader2, Trash2, MessageSquare, Lightbulb, X, Save, Send
